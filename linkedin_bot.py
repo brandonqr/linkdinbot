@@ -1,152 +1,187 @@
 import os
 import logging
-from selenium import webdriver
-from selenium.webdriver.common.keys import Keys
 import time
 import json
+import random
+from selenium import webdriver
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 
+# Constantes
+LINKEDIN_URL = 'https://www.linkedin.com'
+LINKEDIN_LOGIN_URL = 'https://www.linkedin.com/login'
+COOKIES_PATH = "/data/linkedin_cookies.txt"
+PROFILES_JSON_PATH = "/data/linkedin_profiles.json"
+SCREENSHOT_PATH = "/data/mynetwork_screenshot.png"
+LINKEDIN_SEARCH_URL='https://www.linkedin.com/search/results/people/?keywords=CEO%20OR%20Head%20OR%20Director%20sustainability%20technology&origin=GLOBAL_SEARCH_HEADER&sid=80j'
+USERNAME = os.environ.get('LINKEDIN_USERNAME')
+PASSWORD = os.environ.get('LINKEDIN_PASSWORD')
 
 # Configuración del logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Configura tus credenciales
-# Obtén tus credenciales de las variables de entorno
-USERNAME = os.environ.get('LINKEDIN_USERNAME')
-PASSWORD = os.environ.get('LINKEDIN_PASSWORD')
-MESSAGE = 'Hola [nombre], me gustaría conectarme contigo por...'
+class LinkedInBot:
 
-logger.info("Starting LinkedIn bot")
+    def __init__(self):
+        options = webdriver.ChromeOptions()
+        options.add_experimental_option('prefs', {'intl.accept_languages': 'es-ES'})
 
-# Opciones para el driver
-options = webdriver.ChromeOptions()
-options.add_argument('--no-sandbox')
-options.add_argument('--headless')
-options.add_argument('--disable-dev-shm-usage')
-
-# Configura el WebDriver (Chrome con opciones)
-driver = webdriver.Chrome(options=options)
-
-def extract_profiles_data(driver):
-    """Extrae los datos de los perfiles de la página actual y devuelve una lista de diccionarios."""
-    profiles = []
-
-    # Localizar todos los elementos que representan a los perfiles
-    profile_elements = driver.find_elements_by_css_selector('.search-result__info')
-
-    for profile in profile_elements:
-        # Extracción de la URL, nombre, puesto y lugar de trabajo
-        try:
-            link = profile.find_element_by_tag_name('a').get_attribute('href')
-            name = profile.find_element_by_css_selector('.name.actor-name').text
-            position = profile.find_element_by_css_selector('.subline-level-1').text
-            location = profile.find_element_by_css_selector('.subline-level-2').text
-            profiles.append({
-                'url': link,
-                'name': name,
-                'position': position,
-                'location': location
-            })
-        except Exception as e:
-            logger.warning(f"Failed to extract profile data. Error: {e}")
-
-    return profiles
-
-
-
-
-
-# Visita LinkedIn
-driver.get('https://www.linkedin.com')
-
-# Carga las cookies previamente guardadas
-cookies_loaded = False
-valid_cookies = False  # <-- Añade esta línea para inicializar 'valid_cookies' antes de cualquier lógica
-
-try:
-    with open("/data/linkedin_cookies.txt", "r") as file:
-        cookies = json.load(file)
-        for cookie in cookies:
-            driver.add_cookie(cookie)
-    driver.refresh()
-    cookies_loaded = True
-    logger.info("Cookies loaded successfully")
-except FileNotFoundError:
-    logger.warning("No cookie file found. Will attempt to authenticate with credentials.")
-
-# Comprueba si las cookies son válidas.
-if cookies_loaded:
-    try:
-        # Intenta acceder a una página que solo es accesible cuando estás conectado
-        driver.get('https://www.linkedin.com/search/results/people/?keywords=CEO%20OR%20Head%20OR%20Director%20sustainability%20technology&origin=GLOBAL_SEARCH_HEADER&sid=80j')
-        time.sleep(5)  # Espera un poco para asegurarte de que la página esté completamente cargada.
-       
-        # Si no estás en la página de inicio de sesión, suponemos que la cookie es válida.
-        if 'login' not in driver.current_url:
-            valid_cookies = True
-            logger.info("Valid cookies detected. Proceeding with the next steps.")
-            
-            # Tomar una captura de pantalla
-            screenshot_path = "/data/mynetwork_screenshot.png"
-            driver.save_screenshot(screenshot_path)
-            logger.info(f"Screenshot saved to {screenshot_path}")
-        else:
-            valid_cookies = False
-    except:
-        valid_cookies = False
-
-if not valid_cookies or not cookies_loaded:
-    logger.info("Attempting to authenticate with provided credentials.")
-    driver.get('https://www.linkedin.com/login')
-    time.sleep(3) # Dale unos segundos para cargar la página de inicio de sesión
+        options.add_argument('--no-sandbox')
+        options.add_argument('--headless')
+        options.add_argument('--disable-dev-shm-usage')
+        self.driver = webdriver.Chrome(options=options)
+        self.wait = WebDriverWait(self.driver, 15)
     
-    # Verifica si estás en la página de inicio de sesión antes de intentar enviar las credenciales
-    if 'login' in driver.current_url:
-        logger.info("On LinkedIn login page. Sending credentials.")
-        driver.find_element_by_id('username').send_keys(USERNAME)
-        driver.find_element_by_id('password').send_keys(PASSWORD + Keys.RETURN)
-        time.sleep(5)  # Espera para que la página cargue y la sesión se establezca
-        
-        # Verifica si todavía estás en la página de inicio de sesión
-        if 'login' in driver.current_url:
-            # Tomar una captura de pantalla
-            screenshot_path = "/data/mynetwork_screenshot.png"
-            driver.save_screenshot(screenshot_path)
-            logger.info(f"Screenshot saved to {screenshot_path}")
+    def random_sleep(self, min_time=3, max_time=20):
+        sleep_time = random.uniform(min_time, max_time)
+        time.sleep(sleep_time)
+
+    def load_cookies(self):
+        try:
+            # Navigate to LinkedIn before loading cookies
+            self.driver.get(LINKEDIN_URL)
+            self.random_sleep()
+
+            with open(COOKIES_PATH, "r") as file:
+                cookies = json.load(file)
+                for cookie in cookies:
+                    self.driver.add_cookie(cookie)
+            self.driver.refresh()
+            logger.info("Cookies loaded successfully")
+            return True
+        except FileNotFoundError:
+            logger.warning("No cookie file found. Will attempt to authenticate with credentials.")
+            return False
+
+
+    def check_valid_cookies(self):
+        try:
+            self.driver.get(LINKEDIN_SEARCH_URL)
+            self.random_sleep()
+            return 'login' not in self.driver.current_url
+        except:
+            return False
+
+    def authenticate(self):
+        self.driver.get(LINKEDIN_LOGIN_URL)
+        self.random_sleep()
+        if 'login' in self.driver.current_url:
+            self.driver.find_element_by_id('username').send_keys(USERNAME)
+            self.driver.find_element_by_id('password').send_keys(PASSWORD + Keys.RETURN)
+            self.random_sleep()
+        if 'login' in self.driver.current_url:
+            self.driver.save_screenshot(SCREENSHOT_PATH)
+            logger.info(f"Screenshot saved to {SCREENSHOT_PATH}")
             logger.error("Failed to authenticate. Still on LinkedIn login page. Check your credentials.")
         else:
-            # Guarda las cookies después de iniciar sesión para usos futuros
-            with open("/data/linkedin_cookies.txt", "w") as file:
-                json.dump(driver.get_cookies(), file)
-            logger.info("Authentication successful. Cookies saved for future sessions.")
-    else:
-        logger.error("Failed to navigate to LinkedIn login page.")
-        # Aquí deberías agregar el código para iniciar sesión de nuevo.
+            self.save_cookies()
 
-# ... (resto de tu código)
-if valid_cookies:
-    data = []  # Para almacenar todos los datos de los perfiles
+    def save_cookies(self):
+        with open(COOKIES_PATH, 'w') as file:
+            json.dump(self.driver.get_cookies(), file)
+        logger.info(f"Cookies saved to {COOKIES_PATH}")
 
-    # Mientras haya un botón de "Siguiente" activo, sigue extrayendo datos y avanzando páginas
-    while True:
-        data.extend(extract_profiles_data(driver))
+    def extract_profile_data(self):
+        data = []
+        while True:
+            current_page_data = self.extract_profiles_from_current_page()
+            data.extend(current_page_data)
+            # Guardar los datos de la página actual
+            self.save_profile_data(current_page_data)
 
-        # Intentar hacer clic en el botón "Siguiente"
+            try:
+                # Desplazarse hasta el final de la página
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                self.random_sleep()  # Agregar un pequeño retraso para dar tiempo al navegador a desplazarse
+                
+                wait = WebDriverWait(self.driver, 10)
+                next_button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, '.artdeco-pagination__button.artdeco-pagination__button--next.artdeco-button.artdeco-button--muted.artdeco-button--icon-right.artdeco-button--1.artdeco-button--tertiary.ember-view')))
+                next_button.click()
+                self.random_sleep()
+            except Exception as e:
+                logger.warning(f"Failed to extract profile from one of the list elements. Error: {e}")
+                break
+        return data
+
+
+    def extract_profiles_from_current_page(self):
+        profiles = []
+        self.random_sleep()
         try:
-            next_button = driver.find_element_by_xpath('//button[@aria-label="Siguiente"]')
-            next_button.click()
-            time.sleep(5)  # Espera un poco para que la nueva página cargue
+            li_elements = self.driver.find_elements_by_tag_name('li')
+            for li in li_elements:
+                try:
+                    profile_link_element = li.find_element_by_xpath('.//a[contains(@class, "app-aware-link")]')
+                    profile_link = profile_link_element.get_attribute('href')
+                    profile_name =  profile_name = li.find_element_by_xpath('.//span[contains(@class, "entity-result__title-text")]/a/span[@dir="ltr"]/span[@aria-hidden="true"]').text
+
+                    # Obtener el cargo
+                    try:
+                        job_title = li.find_element_by_css_selector('.entity-result__primary-subtitle').text
+                    except:
+                        job_title = None
+
+                    # Obtener la ubicación
+                    try:
+                        location = li.find_element_by_css_selector('.entity-result__secondary-subtitle').text
+                    except:
+                        location = None
+
+                    if profile_link.startswith('https://www.linkedin.com/in/'):
+                        profiles.append({
+                            'profile_link': profile_link,
+                            'name': profile_name,
+                            'job_title': job_title,
+                            'location': location
+                        })
+                except Exception as e:
+                    logger.warning(f"Failed to extract profile from one of the list elements. Error: {e}")
+                    continue
         except Exception as e:
-            logger.info("No more pages to navigate or an error occurred.")
-            break
+            logger.warning(f"Failed to extract profiles from the current page. Error: {e}")
+        return profiles
 
 
+    def save_profile_data(self, new_data):
+        # Cargar datos existentes
+        try:
+            with open(PROFILES_JSON_PATH, 'r') as file:
+                data = json.load(file)
+        except (FileNotFoundError, json.JSONDecodeError):
+            data = []
 
-    # Guarda los datos en un archivo JSON
-    with open('/data/linkedin_profiles.json', 'w') as file:
-        json.dump(data, file)
-    logger.info(f"Data saved to /data/linkedin_profiles.json")
-# Cierra el navegador al finalizar
-driver.quit()
-logger.info("LinkedIn bot finished its task.")
+        # Añadir nuevos datos a los existentes
+        data.extend(new_data)
+
+        # Guardar de nuevo al archivo
+        with open(PROFILES_JSON_PATH, 'w', encoding='utf-8') as file:
+            json.dump(data, file, ensure_ascii=False, indent=4)
+        logger.info(f"Data appended to {PROFILES_JSON_PATH}")
+
+
+    def close(self):
+        self.driver.quit()
+
+def main():
+    bot = LinkedInBot()
+    cookies_loaded = bot.load_cookies()
+    valid_cookies = bot.check_valid_cookies() if cookies_loaded else False
+
+    if not valid_cookies:
+        bot.authenticate()
+        if 'login' in bot.driver.current_url:  # Verificar si después de la autenticación todavía estamos en la página de login
+            logger.error("Authentication failed. Aborting the script.")
+            bot.close()
+            return
+
+    data = bot.extract_profile_data()
+    bot.save_profile_data(data)
+    bot.close()
+    logger.info("LinkedIn bot finished its task.")
+
+if __name__ == "__main__":
+    main()
