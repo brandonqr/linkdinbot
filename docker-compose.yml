@@ -7,6 +7,5 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ./data:/data
-    environment:
-      - LINKEDIN_USERNAME=${LINKEDIN_USERNAME}
-      - LINKEDIN_PASSWORD=${LINKEDIN_PASSWORD}
+    env_file:
+      - .env

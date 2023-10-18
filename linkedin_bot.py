@@ -8,6 +8,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from pymongo import MongoClient
 
 
 # Constantes
@@ -19,6 +20,7 @@ SCREENSHOT_PATH = "/data/mynetwork_screenshot.png"
 LINKEDIN_SEARCH_URL='https://www.linkedin.com/search/results/people/?keywords=CEO%20OR%20Head%20OR%20Director%20sustainability%20technology&origin=GLOBAL_SEARCH_HEADER&sid=80j'
 USERNAME = os.environ.get('LINKEDIN_USERNAME')
 PASSWORD = os.environ.get('LINKEDIN_PASSWORD')
+MONGO_CONNECTION_STRING = os.environ.get('MONGO_CONNECTION_STRING')
 
 # Configuración del logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -35,6 +37,9 @@ class LinkedInBot:
         options.add_argument('--disable-dev-shm-usage')
         self.driver = webdriver.Chrome(options=options)
         self.wait = WebDriverWait(self.driver, 15)
+        self.mongo_client = MongoClient(MONGO_CONNECTION_STRING)
+        self.db = self.mongo_client.linkedin_data
+        self.connect_to_mongo()
     
     def random_sleep(self, min_time=3, max_time=20):
         sleep_time = random.uniform(min_time, max_time)
@@ -92,6 +97,8 @@ class LinkedInBot:
             data.extend(current_page_data)
             # Guardar los datos de la página actual
             self.save_profile_data(current_page_data)
+            self.save_profile_data_to_mongo(current_page_data)
+
 
             try:
                 # Desplazarse hasta el final de la página
@@ -116,9 +123,23 @@ class LinkedInBot:
             for li in li_elements:
                 try:
                     profile_link_element = li.find_element_by_xpath('.//a[contains(@class, "app-aware-link")]')
-                    profile_link = profile_link_element.get_attribute('href')
-                    profile_name =  profile_name = li.find_element_by_xpath('.//span[contains(@class, "entity-result__title-text")]/a/span[@dir="ltr"]/span[@aria-hidden="true"]').text
 
+                    profile_link = profile_link_element.get_attribute('href')
+                    # logger.warning(f"profile_link: {profile_link}")
+
+                    profile_name = li.find_element_by_xpath('.//span[contains(@class, "entity-result__title-text")]/a/span[@dir="ltr"]/span[@aria-hidden="true"]').text
+
+                    # Obtener ID
+                    try:
+                        id_element = li.find_element_by_xpath('.//div[@class="entity-result" and @data-chameleon-result-urn]')
+
+                        # Extraer el valor del atributo 'data-chameleon-result-urn'
+                        id_value_element = id_element.get_attribute('data-chameleon-result-urn')
+
+                        # Obtener el número deseado dividiendo el valor del atributo por ':'
+                        id_value = id_value_element.split(':')[-1]
+                    except:
+                        id_value = 1
                     # Obtener el cargo
                     try:
                         job_title = li.find_element_by_css_selector('.entity-result__primary-subtitle').text
@@ -133,13 +154,14 @@ class LinkedInBot:
 
                     if profile_link.startswith('https://www.linkedin.com/in/'):
                         profiles.append({
+                            'id': id_value,
                             'profile_link': profile_link,
                             'name': profile_name,
                             'job_title': job_title,
                             'location': location
                         })
                 except Exception as e:
-                    logger.warning(f"Failed to extract profile from one of the list elements. Error: {e}")
+                    # logger.warning(f"Failed to extract profile from one of the list elements. Error: {e}")
                     continue
         except Exception as e:
             logger.warning(f"Failed to extract profiles from the current page. Error: {e}")
@@ -162,9 +184,35 @@ class LinkedInBot:
             json.dump(data, file, ensure_ascii=False, indent=4)
         logger.info(f"Data appended to {PROFILES_JSON_PATH}")
 
+    def connect_to_mongo(self):
+        try:
+            logger.info("connect_to_mongo: ")
+            connection_string = MONGO_CONNECTION_STRING
+            self.client = MongoClient(connection_string)
+            self.db = self.client['linkedin_data']  # Aquí 'linkedin_data' es el nombre de la base de datos. Puedes cambiarlo si lo deseas.
+            self.collection = self.db['profiles']   # 'profiles' es el nombre de la colección donde se guardarán los datos.
+        except Exception as e:
+            logger.error(f"FAILED MMONGGOCOONECT {e}")
+
+    def save_profile_data_to_mongo(self, new_data):
+        logger.info("save_profile_data_to_mongo: ")
+        try:
+            if not new_data:
+                logger.warning("No data to save to MongoDB.")
+                return
+
+            collection = self.db.profiles
+            result = collection.insert_many(new_data)
+            if result.acknowledged:
+                logger.info(f"Data saved to MongoDB. Inserted IDs: {result.inserted_ids}")
+            else:
+                logger.warning("Data was not acknowledged by MongoDB.")
+        except Exception as e:
+            logger.error(f"Failed to save data to MongoDB. Error: {e}", exc_info=True)
 
     def close(self):
         self.driver.quit()
+        self.mongo_client.close()
 
 def main():
     bot = LinkedInBot()
@@ -178,8 +226,9 @@ def main():
             bot.close()
             return
 
-    data = bot.extract_profile_data()
-    bot.save_profile_data(data)
+    bot.extract_profile_data()
+    # bot.save_profile_data_to_mongo(data)
+    # bot.save_profile_data(data)
     bot.close()
     logger.info("LinkedIn bot finished its task.")
 
